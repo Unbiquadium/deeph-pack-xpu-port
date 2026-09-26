@@ -214,23 +214,23 @@ if calc_job == "band":
         ky = np.linspace(kpath[1], kpath[4], pnkpts)[list_index_kxyz[k_point]]
         kz = np.linspace(kpath[2], kpath[5], pnkpts)[list_index_kxyz[k_point]]
 
-        H_k = np.matrix(np.zeros((norbits, norbits), dtype=default_dtype))
-        S_k = np.matrix(np.zeros((norbits, norbits), dtype=default_dtype))
+        H_k = np.zeros((norbits, norbits), dtype=default_dtype)
+        S_k = np.zeros((norbits, norbits), dtype=default_dtype)
         for R in H_R.keys():
             H_k += H_R[R] * np.exp(1j*2*np.pi*np.dot([kx, ky, kz], R))
             S_k += S_R[R] * np.exp(1j*2*np.pi*np.dot([kx, ky, kz], R))
             # print(H_k)
-        H_k = (H_k + H_k.getH())/2.
-        S_k = (S_k + S_k.getH())/2.
+        H_k = (H_k + H_k.conj().T)/2.
+        S_k = (S_k + S_k.conj().T)/2.
         num_projected_out = 0
         if ill_project:
             egval_S, egvec_S = linalg.eig(S_k)
             project_index = abs(egval_S) > ill_threshold
             if np.count_nonzero(project_index) != norbits:
-                egvec_S = np.matrix(egvec_S[:, project_index])
+                egvec_S = egvec_S[:, project_index]
                 num_projected_out = norbits - np.count_nonzero(project_index)
-                H_k = egvec_S.H @ H_k @ egvec_S
-                S_k = egvec_S.H @ S_k @ egvec_S
+                H_k = egvec_S.conj().T @ H_k @ egvec_S
+                S_k = egvec_S.conj().T @ S_k @ egvec_S
                 egval = linalg.eigvalsh(H_k, S_k, lower=False)
                 egval = np.concatenate([egval, np.full(num_projected_out, 1e4)])
             else:
