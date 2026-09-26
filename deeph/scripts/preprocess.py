@@ -13,8 +13,26 @@ from deeph.julia import julia_command
 def collect_magmom_from_openmx(input_dir, output_dir, num_atom, mag_element):
     magmom_data = np.zeros((num_atom, 4))
 
-    cmd = f'grep --text -A {num_atom + 3} "Total spin moment" {os.path.join(input_dir, "openmx.scfout")}'
-    magmom_str = os.popen(cmd).read().splitlines()
+    scfout_path = os.path.join(input_dir, "openmx.scfout")
+    with open(scfout_path, "rb") as file:
+        scfout_data = file.read()
+
+    marker = b"Total spin moment"
+    marker_pos = scfout_data.find(marker)
+    if marker_pos < 0:
+        raise ValueError(
+            f"Could not find 'Total spin moment' in {scfout_path}"
+        )
+
+    line_start = scfout_data.rfind(b"\\n", 0, marker_pos) + 1
+    magmom_str = (
+        scfout_data[line_start:]
+        .splitlines()[:num_atom + 4]
+    )
+    magmom_str = [
+        line.decode("utf-8", errors="replace")
+        for line in magmom_str
+    ]
     # print("Total local magnetic moment:", magmom_str[0].split()[4])
 
     for index in range(num_atom):
@@ -32,8 +50,18 @@ def collect_magmom_from_abacus(input_dir, output_dir, abacus_suffix, num_atom, m
     magmom_data = np.zeros((num_atom, 4))
 
     # using running_scf.log file with INPUT file out_chg and out_mul == 1
-    cmd = f"grep 'Total Magnetism' {os.path.join(input_dir, 'OUT.' + abacus_suffix, 'running_scf.log')}"
-    datas = os.popen(cmd).read().strip().splitlines()
+    scf_log_path = os.path.join(
+        input_dir,
+        'OUT.' + abacus_suffix,
+        'running_scf.log',
+    )
+    with open(scf_log_path, 'r', encoding='utf-8', errors='replace') as file:
+        matching_lines = [
+            line
+            for line in file
+            if 'Total Magnetism' in line
+        ]
+    datas = ''.join(matching_lines).strip().splitlines()
     if datas:
         for index, data in enumerate(datas):
             element_str = data.split()[4]

@@ -20,7 +20,7 @@ def main():
                         help='')
     parser.add_argument('--output_dir', type=str,
                         help='')
-    parser.add_argument('--disable_cuda', action='store_true', help='Disable CUDA')
+    parser.add_argument('--disable_cuda', action='store_true', help='Disable accelerator use (legacy option name)')
     parser.add_argument('--save_csv', action='store_true', help='Save the result for each edge in csv format')
     parser.add_argument(
         '--interface',
