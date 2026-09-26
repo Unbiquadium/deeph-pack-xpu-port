@@ -470,7 +470,7 @@ info_dict = Dict(
     "isspinful" => spinful
     )
 open(joinpath(output_dir, "info.json"), "w") do f
-    write(f, json(info_dict, 4))
+    write(f, JSON.json(info_dict, 4))
 end
 open(joinpath(output_dir, "element.dat"), "w") do f
     writedlm(f, element)

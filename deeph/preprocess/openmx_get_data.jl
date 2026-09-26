@@ -448,7 +448,7 @@ info_dict = Dict(
     "isspinful" => spinful
     )
 open("info.json", "w") do f
-    write(f, json(info_dict, 4))
+    write(f, JSON.json(info_dict, 4))
 end
 open("site_positions.dat", "w") do f
     writedlm(f, site_positions)
