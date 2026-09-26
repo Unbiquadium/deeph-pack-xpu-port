@@ -8,6 +8,19 @@ from scipy import linalg
 import tqdm
 from pathos.multiprocessing import ProcessingPool as Pool
 
+def _parse_bool(value):
+    if isinstance(value, bool):
+        return value
+    value = value.lower()
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    raise argparse.ArgumentTypeError(
+        "expected 'true' or 'false'"
+    )
+
+
 def parse_commandline():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -23,7 +36,7 @@ def parse_commandline():
         help="config file in the format of JSON"
     )
     parser.add_argument(
-        "--ill_project", type=bool,
+        "--ill_project", type=_parse_bool,
         help="projects out the eigenvectors of the overlap matrix that correspond to eigenvalues smaller than ill_threshold",
         default=True
     )
