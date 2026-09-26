@@ -2,12 +2,14 @@ import os
 import time
 import subprocess as sp
 import json
+import shlex
 
 import argparse
 
 from deeph import get_inference_config, rotate_back, abacus_parse
 from deeph.preprocess import openmx_parse_overlap, get_rc
 from deeph.inference import predict, predict_with_grad
+from deeph.julia import julia_command
 
 
 def main():
@@ -55,23 +57,54 @@ def main():
     config.write(open(os.path.join(work_dir, 'config.ini'), "w"))
 
 
+    inference_dir = os.path.join(
+        os.path.dirname(os.path.dirname(__file__)),
+        'inference',
+    )
+
     if not restore_blocks_py:
-        cmd3_post = f"{julia_interpreter} " \
-                    f"{os.path.join(os.path.dirname(os.path.dirname(__file__)), 'inference', 'restore_blocks.jl')} " \
-                    f"--input_dir {work_dir} --output_dir {work_dir}"
+        cmd3_post = julia_command(
+            julia_interpreter,
+            os.path.join(inference_dir, 'restore_blocks.jl'),
+            '--input_dir',
+            work_dir,
+            '--output_dir',
+            work_dir,
+        )
 
     if eigen_solver == 'sparse_jl':
-        cmd5 = f"{julia_interpreter} " \
-               f"{os.path.join(os.path.dirname(os.path.dirname(__file__)), 'inference', 'sparse_calc.jl')} " \
-               f"--input_dir {work_dir} --output_dir {work_dir} --config {config.get('basic', 'sparse_calc_config')}"
+        cmd5 = julia_command(
+            julia_interpreter,
+            os.path.join(inference_dir, 'sparse_calc.jl'),
+            '--input_dir',
+            work_dir,
+            '--output_dir',
+            work_dir,
+            '--config',
+            config.get('basic', 'sparse_calc_config'),
+        )
     elif eigen_solver == 'dense_jl':
-        cmd5 = f"{julia_interpreter} " \
-               f"{os.path.join(os.path.dirname(os.path.dirname(__file__)), 'inference', 'dense_calc.jl')} " \
-               f"--input_dir {work_dir} --output_dir {work_dir} --config {config.get('basic', 'sparse_calc_config')}"
+        cmd5 = julia_command(
+            julia_interpreter,
+            os.path.join(inference_dir, 'dense_calc.jl'),
+            '--input_dir',
+            work_dir,
+            '--output_dir',
+            work_dir,
+            '--config',
+            config.get('basic', 'sparse_calc_config'),
+        )
     elif eigen_solver == 'dense_py':
-        cmd5 = f"{python_interpreter} " \
-               f"{os.path.join(os.path.dirname(os.path.dirname(__file__)), 'inference', 'dense_calc.py')} " \
-               f"--input_dir {work_dir} --output_dir {work_dir} --config {config.get('basic', 'sparse_calc_config')}"
+        cmd5 = [
+            *shlex.split(python_interpreter),
+            os.path.join(inference_dir, 'dense_calc.py'),
+            '--input_dir',
+            work_dir,
+            '--output_dir',
+            work_dir,
+            '--config',
+            config.get('basic', 'sparse_calc_config'),
+        ]
     else:
         raise ValueError(f"Unknown eigen_solver: {eigen_solver}")
 
@@ -79,9 +112,9 @@ def main():
     print(f"\n~~~~~~~ 2.get_local_coordinate\n")
     print(f"\n~~~~~~~ 3.get_pred_Hamiltonian\n")
     if not restore_blocks_py:
-        print(f"\n~~~~~~~ 3_post.restore_blocks, command: \n{cmd3_post}\n")
+        print(f"\n~~~~~~~ 3_post.restore_blocks, command: \n{shlex.join(cmd3_post)}\n")
     print(f"\n~~~~~~~ 4.rotate_back\n")
-    print(f"\n~~~~~~~ 5.sparse_calc, command: \n{cmd5}\n")
+    print(f"\n~~~~~~~ 5.sparse_calc, command: \n{shlex.join(cmd5)}\n")
 
     if 1 in task:
         begin = time.time()
@@ -131,7 +164,7 @@ def main():
             else:
                 assert os.path.exists(os.path.join(work_dir, "rh_pred.h5"))
         else:
-            capture_output = sp.run(cmd3_post, shell=True, capture_output=False, encoding="utf-8")
+            capture_output = sp.run(cmd3_post, capture_output=False, encoding="utf-8")
             assert capture_output.returncode == 0
             assert os.path.exists(os.path.join(work_dir, "rh_pred.h5"))
         print('\n******* Finish 3.get_pred_Hamiltonian, cost %d seconds\n' % (time.time() - begin))
@@ -146,7 +179,7 @@ def main():
     if 5 in task:
         begin = time.time()
         print(f"\n####### Begin 5.sparse_calc")
-        capture_output = sp.run(cmd5, shell=True, capture_output=False, encoding="utf-8")
+        capture_output = sp.run(cmd5, capture_output=False, encoding="utf-8")
         assert capture_output.returncode == 0
         if eigen_solver in ['sparse_jl']:
             assert os.path.exists(os.path.join(work_dir, "sparse_matrix.jld"))

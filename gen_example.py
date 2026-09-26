@@ -158,7 +158,7 @@ graph_dir = %s
 save_dir = %s
 raw_dir = %s
 dataset_name = Bi_soc
-device = cuda:0
+device = auto
 num_threads = 64
 save_to_time_folder = False
 save_csv = False
@@ -741,8 +741,8 @@ MD.Type                           Nomd      # Nomd (SCF) / NVT_NH (MD)
 Band.dispersion                 on
 Band.Nkpath                     3
 <Band.kpath
-20 0.666666667 0.333333333 0.000  0.000 0.000 0.000  K \Gamma
-20 0.000 0.000 0.000  0.500 0.000 0.000  \Gamma M
+20 0.666666667 0.333333333 0.000  0.000 0.000 0.000  K \\Gamma
+20 0.000 0.000 0.000  0.500 0.000 0.000  \\Gamma M
 15 0.500 0.000 0.000  0.333333333 -0.333333333 0.000  M K'
 Band.kpath>
 ### END ###

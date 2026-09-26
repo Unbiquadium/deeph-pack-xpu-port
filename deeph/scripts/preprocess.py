@@ -7,6 +7,7 @@ import argparse
 from pathos.multiprocessing import ProcessingPool as Pool
 
 from deeph import get_preprocess_config, get_rc, get_rh, abacus_parse, siesta_parse
+from deeph.julia import julia_command
 
 
 def collect_magmom_from_openmx(input_dir, output_dir, num_atom, mag_element):
@@ -89,27 +90,51 @@ def main():
 
     julia_interpreter = config.get('interpreter', 'julia_interpreter')
 
+    preprocess_dir = os.path.join(
+        os.path.dirname(os.path.dirname(__file__)),
+        'preprocess',
+    )
+
     def make_cmd(input_dir, output_dir, target, interface, get_S):
         if interface == 'openmx':
+            args = [
+                '--input_dir',
+                input_dir,
+                '--output_dir',
+                output_dir,
+                '--save_overlap',
+                str(get_S).lower(),
+            ]
+
             if target == 'hamiltonian':
-                cmd = f"{julia_interpreter} " \
-                      f"{os.path.join(os.path.dirname(os.path.dirname(__file__)), 'preprocess', 'openmx_get_data.jl')} " \
-                      f"--input_dir {input_dir} --output_dir {output_dir} --save_overlap {str(get_S).lower()}"
+                pass
             elif target == 'density_matrix':
-                cmd = f"{julia_interpreter} " \
-                      f"{os.path.join(os.path.dirname(os.path.dirname(__file__)), 'preprocess', 'openmx_get_data.jl')} " \
-                      f"--input_dir {input_dir} --output_dir {output_dir} --save_overlap {str(get_S).lower()} --if_DM true"
+                args.extend(['--if_DM', 'true'])
             else:
                 raise ValueError('Unknown target: {}'.format(target))
-        elif interface == 'siesta' or interface == 'abacus':
-            cmd = ''
-        elif interface == 'aims':
-            cmd = f"{julia_interpreter} " \
-                  f"{os.path.join(os.path.dirname(os.path.dirname(__file__)), 'preprocess', 'aims_get_data.jl')} " \
-                  f"--input_dir {input_dir} --output_dir {output_dir} --save_overlap {str(get_S).lower()}"
-        else:
-            raise ValueError('Unknown interface: {}'.format(interface))
-        return cmd
+
+            return julia_command(
+                julia_interpreter,
+                os.path.join(preprocess_dir, 'openmx_get_data.jl'),
+                *args,
+            )
+
+        if interface == 'aims':
+            return julia_command(
+                julia_interpreter,
+                os.path.join(preprocess_dir, 'aims_get_data.jl'),
+                '--input_dir',
+                input_dir,
+                '--output_dir',
+                output_dir,
+                '--save_overlap',
+                str(get_S).lower(),
+            )
+
+        if interface in ('siesta', 'abacus'):
+            return None
+
+        raise ValueError('Unknown interface: {}'.format(interface))
 
     os.chdir(raw_dir)
     relpath_list = []
@@ -147,14 +172,24 @@ def main():
             interface=interface,
             get_S=get_S,
         )
-        capture_output = sp.run(cmd, shell=True, capture_output=True, encoding="utf-8")
-        if capture_output.returncode != 0:
-            with open(os.path.join(os.path.abspath(relpath), 'error.log'), 'w') as f:
-                f.write(f'[stdout of cmd "{cmd}"]:\n\n{capture_output.stdout}\n\n\n'
-                        f'[stderr of cmd "{cmd}"]:\n\n{capture_output.stderr}')
-            print(f'\nFailed to preprocess: {abspath}, '
-                  f'log file was saved to {os.path.join(os.path.abspath(relpath), "error.log")}')
-            return
+        if cmd is not None:
+            capture_output = sp.run(
+                cmd,
+                capture_output=True,
+                encoding="utf-8",
+            )
+            if capture_output.returncode != 0:
+                command_text = ' '.join(repr(arg) for arg in cmd)
+                with open(os.path.join(os.path.abspath(relpath), 'error.log'), 'w') as f:
+                    f.write(
+                        f'[stdout of cmd "{command_text}"]:\n\n'
+                        f'{capture_output.stdout}\n\n\n'
+                        f'[stderr of cmd "{command_text}"]:\n\n'
+                        f'{capture_output.stderr}'
+                    )
+                print(f'\nFailed to preprocess: {abspath}, '
+                      f'log file was saved to {os.path.join(os.path.abspath(relpath), "error.log")}')
+                return
 
         if interface == 'abacus':
             print("Output subdirectories:", "OUT." + abacus_suffix)
