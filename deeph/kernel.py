@@ -19,13 +19,64 @@ from torch.optim.lr_scheduler import MultiStepLR, ReduceLROnPlateau, CyclicLR
 from torch.utils.data import SubsetRandomSampler, DataLoader
 from torch.nn.utils import clip_grad_norm_
 from torch.utils.tensorboard import SummaryWriter
-from torch_scatter import scatter_add
+from torch_geometric.utils import scatter
 import numpy as np
 from psutil import cpu_count
 
 from .data import HData
 from .graph import Collater
 from .utils import Logger, save_model, LossRecord, MaskMSELoss, Transform
+
+
+def scatter_add(src, index, dim=0, dim_size=None):
+    return scatter(src, index, dim=dim, dim_size=dim_size, reduce='sum')
+
+
+def _xpu_available():
+    return hasattr(torch, 'xpu') and torch.xpu.is_available()
+
+
+def _select_device(config):
+    if config.getboolean('basic', 'disable_cuda'):
+        return torch.device('cpu')
+
+    requested = config.get('basic', 'device', fallback='auto').strip().lower()
+
+    if requested in ('', 'auto'):
+        if _xpu_available():
+            return torch.device('xpu:0')
+        if torch.cuda.is_available():
+            return torch.device('cuda:0')
+        return torch.device('cpu')
+
+    if requested.startswith('xpu'):
+        if not _xpu_available():
+            raise RuntimeError(f'XPU device requested but unavailable: {requested}')
+        return torch.device(requested)
+
+    if requested.startswith('cuda'):
+        if torch.cuda.is_available():
+            return torch.device(requested)
+        if _xpu_available():
+            warnings.warn(
+                f'CUDA device {requested!r} was requested, but CUDA is unavailable; '
+                'using xpu:0 for compatibility with legacy DeepH configuration files.'
+            )
+            return torch.device('xpu:0')
+        raise RuntimeError(f'CUDA device requested but unavailable: {requested}')
+
+    if requested == 'cpu':
+        return torch.device('cpu')
+
+    raise ValueError(f'Unsupported device specification: {requested}')
+
+
+def _accelerator_device_count(device):
+    if device.type == 'xpu':
+        return torch.xpu.device_count()
+    if device.type == 'cuda':
+        return torch.cuda.device_count()
+    return 0
 
 
 class DeepHKernel:
@@ -51,10 +102,7 @@ class DeepHKernel:
             shutil.copytree(os.path.dirname(__file__), os.path.join(src_dir, 'deeph'))
         except:
             warnings.warn("Unable to copy scripts")
-        if not config.getboolean('basic', 'disable_cuda'):
-            self.device = torch.device(config.get('basic', 'device') if torch.cuda.is_available() else 'cpu')
-        else:
-            self.device = torch.device('cpu')
+        self.device = _select_device(config)
         config.set('basic', 'device', str(self.device))
         if config.get('hyperparameter', 'dtype') == 'float32':
             default_dtype_torch = torch.float32
@@ -70,18 +118,25 @@ class DeepHKernel:
         torch.set_default_dtype(default_dtype_torch)
         torch.set_printoptions(precision=8, linewidth=160, threshold=np.inf)
         np.random.seed(config.getint('basic', 'seed'))
-        torch.manual_seed(config.getint('basic', 'seed'))
-        torch.cuda.manual_seed_all(config.getint('basic', 'seed'))
-        random.seed(config.getint('basic', 'seed'))
-        torch.backends.cudnn.benchmark = False
-        torch.backends.cudnn.deterministic = True
-        torch.cuda.empty_cache()
-        
+        seed = config.getint('basic', 'seed')
+        torch.manual_seed(seed)
+        if self.device.type == 'xpu':
+            torch.xpu.manual_seed_all(seed)
+            torch.xpu.empty_cache()
+        elif self.device.type == 'cuda':
+            torch.cuda.manual_seed_all(seed)
+            torch.backends.cudnn.benchmark = False
+            torch.backends.cudnn.deterministic = True
+            torch.cuda.empty_cache()
+        random.seed(seed)
+
         if config.getint('basic', 'num_threads', fallback=-1) == -1:
-            if torch.cuda.device_count() == 0:
-                torch.set_num_threads(cpu_count(logical=False))
+            physical_cpu_count = cpu_count(logical=False) or 1
+            accelerator_count = _accelerator_device_count(self.device)
+            if accelerator_count == 0:
+                torch.set_num_threads(physical_cpu_count)
             else:
-                torch.set_num_threads(cpu_count(logical=False) // torch.cuda.device_count())
+                torch.set_num_threads(max(1, physical_cpu_count // accelerator_count))
         else:
             torch.set_num_threads(config.getint('basic', 'num_threads'))
 

@@ -9,9 +9,8 @@ from torch_geometric.nn.conv import MessagePassing
 from torch_geometric.nn.norm import LayerNorm, PairNorm, InstanceNorm
 from torch_geometric.typing import PairTensor, Adj, OptTensor, Size
 from torch_geometric.nn.inits import glorot, zeros
-from torch_geometric.utils import softmax
+from torch_geometric.utils import softmax, scatter
 from torch_geometric.nn.models.dimenet import BesselBasisLayer
-from torch_scatter import scatter_add, scatter
 import numpy as np
 from scipy.special import comb
 
@@ -19,6 +18,10 @@ from .from_se3_transformer import SphericalHarmonics
 from .from_schnetpack import GaussianBasis
 from .from_PyG_future import GraphNorm, DiffGroupNorm
 from .from_HermNet import RBF, cosine_cutoff, ShiftedSoftplus, _eps
+
+
+def scatter_add(src, index, dim=0, dim_size=None):
+    return scatter(src, index, dim=dim, dim_size=dim_size, reduce='sum')
 
 
 class ExpBernsteinBasis(nn.Module):

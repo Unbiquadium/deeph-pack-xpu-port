@@ -2,7 +2,7 @@ from typing import Optional
 
 import torch
 from torch import Tensor
-from torch_scatter import scatter_mean
+from torch_geometric.utils import scatter
 
 from torch_geometric.nn.inits import zeros, ones
 
@@ -50,9 +50,9 @@ class GraphNorm(torch.nn.Module):
 
         batch_size = int(batch.max()) + 1
 
-        mean = scatter_mean(x, batch, dim=0, dim_size=batch_size)[batch]
+        mean = scatter(x, batch, dim=0, dim_size=batch_size, reduce='mean')[batch]
         out = x - mean * self.mean_scale
-        var = scatter_mean(out.pow(2), batch, dim=0, dim_size=batch_size)
+        var = scatter(out.pow(2), batch, dim=0, dim_size=batch_size, reduce='mean')
         std = (var + self.eps).sqrt()[batch]
         return self.weight * out / std + self.bias
 
