@@ -504,11 +504,6 @@ def _read_pretrained_model_state(
         reference = current_state[name]
         tensor = _read_tensor(item["tensor"])
         if tuple(tensor.shape) == tuple(reference.shape):
-            _require(
-                tensor.dtype == reference.dtype,
-                f"Pretrained model state dtype mismatch for {name!r}: "
-                f"checkpoint={tensor.dtype}, current={reference.dtype}",
-            )
             loaded[name] = tensor
     return loaded
 
