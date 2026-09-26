@@ -2,7 +2,6 @@ import csv
 import os
 import argparse
 import time
-import warnings
 from configparser import ConfigParser
 
 import numpy as np
@@ -10,6 +9,7 @@ import torch
 from pymatgen.core.structure import Structure
 
 from deeph import get_graph, DeepHKernel, collate_fn
+from deeph.data import load_graph_hdf5, save_graph_hdf5
 
 
 def main():
@@ -30,12 +30,12 @@ def main():
     parser.add_argument('--huge_structure', type=bool, default=False, help='')
     args = parser.parse_args()
 
-    old_version = False
     assert os.path.exists(os.path.join(args.trained_model_dir, 'config.ini'))
-    if os.path.exists(os.path.join(args.trained_model_dir, 'best_model.pt')) is False:
-        old_version = True
-        assert os.path.exists(os.path.join(args.trained_model_dir, 'best_model.pkl'))
-        assert os.path.exists(os.path.join(args.trained_model_dir, 'src'))
+    checkpoint_path = os.path.join(args.trained_model_dir, 'best_checkpoint.h5')
+    if not os.path.isfile(checkpoint_path):
+        raise FileNotFoundError(
+            f"Missing HDF5 model checkpoint: {checkpoint_path}"
+        )
 
     os.makedirs(args.output_dir, exist_ok=True)
 
@@ -49,29 +49,7 @@ def main():
     config.set('train', 'pretrained', '')
     config.set('train', 'resume', '')
     kernel = DeepHKernel(config)
-    if old_version is False:
-        checkpoint = kernel.build_model(args.trained_model_dir, old_version)
-    else:
-        warnings.warn('You are using the trained model with an old version')
-        checkpoint = torch.load(
-            os.path.join(args.trained_model_dir, 'best_model.pkl'),
-            map_location=kernel.device
-        )
-        for key in ['index_to_Z', 'Z_to_index', 'spinful']:
-            if key in checkpoint:
-                setattr(kernel, key, checkpoint[key])
-        if hasattr(kernel, 'index_to_Z') is False:
-            kernel.index_to_Z = torch.arange(config.getint('basic', 'max_element') + 1)
-        if hasattr(kernel, 'Z_to_index') is False:
-            kernel.Z_to_index = torch.arange(config.getint('basic', 'max_element') + 1)
-        if hasattr(kernel, 'spinful') is False:
-            kernel.spinful = False
-        kernel.num_species = len(kernel.index_to_Z)
-        print("=> load best checkpoint (epoch {})".format(checkpoint['epoch']))
-        print(f"=> Atomic types: {kernel.index_to_Z.tolist()}, "
-              f"spinful: {kernel.spinful}, the number of atomic types: {len(kernel.index_to_Z)}.")
-        kernel.build_model(args.trained_model_dir, old_version)
-        kernel.model.load_state_dict(checkpoint['state_dict'])
+    kernel.build_model(args.trained_model_dir, old_version=False)
 
     with torch.no_grad():
         input_dir = args.input_dir
@@ -87,9 +65,10 @@ def main():
         lattice = torch.tensor(structure.lattice.matrix, dtype=torch.get_default_dtype())
         inv_lattice = torch.inverse(lattice)
 
-        if os.path.exists(os.path.join(input_dir, 'graph.pkl')):
-            data = torch.load(os.path.join(input_dir, 'graph.pkl'))
-            print(f"Load processed graph from {os.path.join(input_dir, 'graph.pkl')}")
+        graph_cache = os.path.join(input_dir, 'graph.h5')
+        if os.path.exists(graph_cache):
+            data = load_graph_hdf5(graph_cache)
+            print(f"Load processed graph from {graph_cache}")
         else:
             begin = time.time()
             data = get_graph(cart_coords, frac_coords, numbers, 0,
@@ -102,8 +81,8 @@ def main():
                              if_lcmp_graph=kernel.config.getboolean('graph', 'if_lcmp_graph', fallback=True),
                              separate_onsite=kernel.separate_onsite,
                              target=kernel.config.get('basic', 'target'), huge_structure=args.huge_structure)
-            torch.save(data, os.path.join(input_dir, 'graph.pkl'))
-            print(f"Save processed graph to {os.path.join(input_dir, 'graph.pkl')}, cost {time.time() - begin} seconds")
+            save_graph_hdf5(graph_cache, data)
+            print(f"Save processed graph to {graph_cache}, cost {time.time() - begin} seconds")
 
         dataset_mask = kernel.make_mask([data])
         batch, subgraph = collate_fn(dataset_mask)

@@ -1,0 +1,11 @@
+# Python generated files
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Local smoke/regression artifacts
+smoke_*.log
+smoke_*.py
+
+# Temporary files
+*.tmp

@@ -1,7 +1,6 @@
 import json
 import os
 import time
-import warnings
 from typing import Union, List
 import sys
 
@@ -14,6 +13,7 @@ import torch.autograd.forward_ad as fwAD
 import h5py
 
 from deeph import get_graph, DeepHKernel, collate_fn, write_ham_h5, load_orbital_types, Rotate, dtype_dict, get_rc
+from deeph.data import load_graph_hdf5, save_graph_hdf5
 
 
 def predict(input_dir: str, output_dir: str, disable_cuda: bool, device: str,
@@ -34,12 +34,12 @@ def predict(input_dir: str, output_dir: str, disable_cuda: bool, device: str,
             block_without_restoration = {}
             os.makedirs(os.path.join(output_dir, 'block_without_restoration'), exist_ok=True)
         for trained_model_dir in tqdm.tqdm(trained_model_dirs):
-            old_version = False
             assert os.path.exists(os.path.join(trained_model_dir, 'config.ini'))
-            if os.path.exists(os.path.join(trained_model_dir, 'best_model.pt')) is False:
-                old_version = True
-                assert os.path.exists(os.path.join(trained_model_dir, 'best_model.pkl'))
-                assert os.path.exists(os.path.join(trained_model_dir, 'src'))
+            checkpoint_path = os.path.join(trained_model_dir, 'best_checkpoint.h5')
+            if not os.path.isfile(checkpoint_path):
+                raise FileNotFoundError(
+                    f"Missing HDF5 model checkpoint: {checkpoint_path}"
+                )
 
             config = ConfigParser()
             config.read(os.path.join(os.path.dirname(os.path.dirname(__file__)), 'default.ini'))
@@ -53,29 +53,7 @@ def predict(input_dir: str, output_dir: str, disable_cuda: bool, device: str,
             config.set('train', 'resume', '')
 
             kernel = DeepHKernel(config)
-            if old_version is False:
-                checkpoint = kernel.build_model(trained_model_dir, old_version)
-            else:
-                warnings.warn('You are using the trained model with an old version')
-                checkpoint = torch.load(
-                    os.path.join(trained_model_dir, 'best_model.pkl'),
-                    map_location=kernel.device
-                )
-                for key in ['index_to_Z', 'Z_to_index', 'spinful']:
-                    if key in checkpoint:
-                        setattr(kernel, key, checkpoint[key])
-                if hasattr(kernel, 'index_to_Z') is False:
-                    kernel.index_to_Z = torch.arange(config.getint('basic', 'max_element') + 1)
-                if hasattr(kernel, 'Z_to_index') is False:
-                    kernel.Z_to_index = torch.arange(config.getint('basic', 'max_element') + 1)
-                if hasattr(kernel, 'spinful') is False:
-                    kernel.spinful = False
-                kernel.num_species = len(kernel.index_to_Z)
-                print("=> load best checkpoint (epoch {})".format(checkpoint['epoch']))
-                print(f"=> Atomic types: {kernel.index_to_Z.tolist()}, "
-                      f"spinful: {kernel.spinful}, the number of atomic types: {len(kernel.index_to_Z)}.")
-                kernel.build_model(trained_model_dir, old_version)
-                kernel.model.load_state_dict(checkpoint['state_dict'])
+            kernel.build_model(trained_model_dir, old_version=False)
 
             if predict_spinful is None:
                 predict_spinful = kernel.spinful
@@ -96,9 +74,10 @@ def predict(input_dir: str, output_dir: str, disable_cuda: bool, device: str,
                 lattice = torch.tensor(structure.lattice.matrix, dtype=torch.get_default_dtype())
                 inv_lattice = torch.inverse(lattice)
 
-                if os.path.exists(os.path.join(input_dir, 'graph.pkl')):
-                    data = torch.load(os.path.join(input_dir, 'graph.pkl'))
-                    print(f"Load processed graph from {os.path.join(input_dir, 'graph.pkl')}")
+                graph_cache = os.path.join(input_dir, 'graph.h5')
+                if os.path.exists(graph_cache):
+                    data = load_graph_hdf5(graph_cache)
+                    print(f"Load processed graph from {graph_cache}")
                 else:
                     begin = time.time()
                     data = get_graph(cart_coords, frac_coords, numbers, 0,
@@ -114,9 +93,9 @@ def predict(input_dir: str, output_dir: str, disable_cuda: bool, device: str,
                                      target=kernel.config.get('basic', 'target'), huge_structure=huge_structure,
                                      if_new_sp=kernel.config.getboolean('graph', 'new_sp', fallback=False),
                                      )
-                    torch.save(data, os.path.join(input_dir, 'graph.pkl'))
+                    save_graph_hdf5(graph_cache, data)
                     print(
-                        f"Save processed graph to {os.path.join(input_dir, 'graph.pkl')}, cost {time.time() - begin} seconds")
+                        f"Save processed graph to {graph_cache}, cost {time.time() - begin} seconds")
                 batch, subgraph = collate_fn([data])
                 sub_atom_idx, sub_edge_idx, sub_edge_ang, sub_index = subgraph
 
@@ -191,12 +170,12 @@ def predict_with_grad(input_dir: str, output_dir: str, disable_cuda: bool, devic
     hamiltonians_grad_pred = {}
 
     for trained_model_dir in tqdm.tqdm(trained_model_dirs):
-        old_version = False
         assert os.path.exists(os.path.join(trained_model_dir, 'config.ini'))
-        if os.path.exists(os.path.join(trained_model_dir, 'best_model.pt')) is False:
-            old_version = True
-            assert os.path.exists(os.path.join(trained_model_dir, 'best_model.pkl'))
-            assert os.path.exists(os.path.join(trained_model_dir, 'src'))
+        checkpoint_path = os.path.join(trained_model_dir, 'best_checkpoint.h5')
+        if not os.path.isfile(checkpoint_path):
+            raise FileNotFoundError(
+                f"Missing HDF5 model checkpoint: {checkpoint_path}"
+            )
 
         config = ConfigParser()
         config.read(os.path.join(os.path.dirname(os.path.dirname(__file__)), 'default.ini'))
@@ -210,29 +189,7 @@ def predict_with_grad(input_dir: str, output_dir: str, disable_cuda: bool, devic
         config.set('train', 'resume', '')
 
         kernel = DeepHKernel(config)
-        if old_version is False:
-            checkpoint = kernel.build_model(trained_model_dir, old_version)
-        else:
-            warnings.warn('You are using the trained model with an old version')
-            checkpoint = torch.load(
-                os.path.join(trained_model_dir, 'best_model.pkl'),
-                map_location=kernel.device
-            )
-            for key in ['index_to_Z', 'Z_to_index', 'spinful']:
-                if key in checkpoint:
-                    setattr(kernel, key, checkpoint[key])
-            if hasattr(kernel, 'index_to_Z') is False:
-                kernel.index_to_Z = torch.arange(config.getint('basic', 'max_element') + 1)
-            if hasattr(kernel, 'Z_to_index') is False:
-                kernel.Z_to_index = torch.arange(config.getint('basic', 'max_element') + 1)
-            if hasattr(kernel, 'spinful') is False:
-                kernel.spinful = False
-            kernel.num_species = len(kernel.index_to_Z)
-            print("=> load best checkpoint (epoch {})".format(checkpoint['epoch']))
-            print(f"=> Atomic types: {kernel.index_to_Z.tolist()}, "
-                  f"spinful: {kernel.spinful}, the number of atomic types: {len(kernel.index_to_Z)}.")
-            kernel.build_model(trained_model_dir, old_version)
-            kernel.model.load_state_dict(checkpoint['state_dict'])
+        kernel.build_model(trained_model_dir, old_version=False)
 
         if predict_spinful is None:
             predict_spinful = kernel.spinful

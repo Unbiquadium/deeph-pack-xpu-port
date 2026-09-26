@@ -805,3 +805,129 @@ class HData(InMemoryDataset):
             data.x = Z_to_index[data.x]
 
         return index_to_Z, Z_to_index
+
+
+SINGLE_GRAPH_FORMAT = "deeph-single-graph"
+SINGLE_GRAPH_FORMAT_VERSION = 1
+
+_SINGLE_GRAPH_SUBGRAPH_KEYS = (
+    "subgraph_atom_idx",
+    "subgraph_edge_idx",
+    "subgraph_edge_ang",
+    "subgraph_index",
+)
+
+
+def save_graph_hdf5(path, graph):
+    """Save one PyG Data graph as tensor-only HDF5; no pickle is used."""
+    if not isinstance(graph, Data):
+        raise TypeError(f"Expected torch_geometric.data.Data, got {type(graph)!r}")
+    required = {"x", "edge_index", "edge_attr"}
+    missing = required - set(graph.keys())
+    if missing:
+        raise RuntimeError(f"Graph is missing required fields: {sorted(missing)}")
+    temporary_file = path + ".tmp"
+    if os.path.exists(temporary_file):
+        os.remove(temporary_file)
+    try:
+        with h5py.File(temporary_file, "w") as f:
+            f.attrs["format"] = SINGLE_GRAPH_FORMAT
+            f.attrs["format_version"] = SINGLE_GRAPH_FORMAT_VERSION
+            g = f.create_group("graph")
+            for key in graph.keys():
+                value = graph[key]
+                if torch.is_tensor(value):
+                    _write_tensor(g, key, value)
+            if hasattr(graph, "stru_id") and isinstance(graph.stru_id, str):
+                g.attrs["stru_id"] = graph.stru_id
+            if hasattr(graph, "spinful") and isinstance(graph.spinful, (bool, np.bool_)):
+                g.attrs["spinful"] = bool(graph.spinful)
+            if hasattr(graph, "subgraph_dict"):
+                if not isinstance(graph.subgraph_dict, dict):
+                    raise TypeError("subgraph_dict must be dict")
+
+                actual_keys = set(graph.subgraph_dict.keys())
+                expected_keys = set(_SINGLE_GRAPH_SUBGRAPH_KEYS)
+                if actual_keys != expected_keys:
+                    raise RuntimeError(
+                        "Invalid subgraph_dict keys: "
+                        f"expected {list(_SINGLE_GRAPH_SUBGRAPH_KEYS)}, "
+                        f"got {sorted(actual_keys)}"
+                    )
+
+                sg = g.create_group("subgraph_dict")
+                for key in _SINGLE_GRAPH_SUBGRAPH_KEYS:
+                    value = graph.subgraph_dict[key]
+                    if not torch.is_tensor(value):
+                        raise TypeError(f"subgraph_dict[{key!r}] must be tensor")
+                    _write_tensor(sg, key, value)
+            f.flush()
+        os.replace(temporary_file, path)
+    except Exception:
+        if os.path.exists(temporary_file):
+            os.remove(temporary_file)
+        raise
+
+
+def load_graph_hdf5(path):
+    """Load one tensor-only PyG graph from the validated HDF5 cache."""
+    with h5py.File(path, "r") as f:
+        if _decode_hdf5_string(f.attrs.get("format", "")) != SINGLE_GRAPH_FORMAT:
+            raise RuntimeError("Invalid single-graph cache format")
+        if int(f.attrs.get("format_version", -1)) != SINGLE_GRAPH_FORMAT_VERSION:
+            raise RuntimeError("Unsupported single-graph cache format version")
+        if set(f.keys()) != {"graph"}:
+            raise RuntimeError("Unexpected single-graph cache root structure")
+        g = f["graph"]
+        kwargs = {}
+        for key in g.keys():
+            if key == "subgraph_dict":
+                continue
+            if not isinstance(g[key], h5py.Dataset):
+                raise RuntimeError(f"Unexpected HDF5 object at {g[key].name}")
+            kwargs[key] = _read_tensor(g, key)
+        if "stru_id" in g.attrs:
+            kwargs["stru_id"] = _decode_hdf5_string(g.attrs["stru_id"])
+        if "spinful" in g.attrs:
+            kwargs["spinful"] = bool(g.attrs["spinful"])
+        data = Data(**kwargs)
+        if "subgraph_dict" in g:
+            sg = g["subgraph_dict"]
+            if not isinstance(sg, h5py.Group):
+                raise RuntimeError("subgraph_dict is not an HDF5 group")
+
+            actual_keys = set(sg.keys())
+            expected_keys = set(_SINGLE_GRAPH_SUBGRAPH_KEYS)
+            if actual_keys != expected_keys:
+                raise RuntimeError(
+                    "Invalid subgraph_dict keys: "
+                    f"expected {list(_SINGLE_GRAPH_SUBGRAPH_KEYS)}, "
+                    f"got {sorted(actual_keys)}"
+                )
+
+            # Do not iterate over HDF5 group order here. h5py normally
+            # exposes group members in name order, while DeepH's collate_fn
+            # relies on the historical semantic order of these four tensors.
+            data.subgraph_dict = {
+                key: _read_tensor(sg, key)
+                for key in _SINGLE_GRAPH_SUBGRAPH_KEYS
+            }
+
+            for key in (
+                "subgraph_atom_idx",
+                "subgraph_edge_idx",
+                "subgraph_index",
+            ):
+                if data.subgraph_dict[key].dtype != torch.int64:
+                    raise RuntimeError(
+                        f"{key} must have dtype torch.int64, got "
+                        f"{data.subgraph_dict[key].dtype}"
+                    )
+
+    if data.x.dtype != torch.int64 or data.edge_index.dtype != torch.int64:
+        raise RuntimeError("Graph index tensors have invalid dtype")
+    if data.edge_index.ndim != 2 or data.edge_index.shape[0] != 2:
+        raise RuntimeError("edge_index must have shape (2, num_edges)")
+    if data.edge_attr.shape[0] != data.edge_index.shape[1]:
+        raise RuntimeError("edge_attr and edge_index edge counts differ")
+    return data

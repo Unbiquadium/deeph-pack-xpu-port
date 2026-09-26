@@ -1,13 +1,11 @@
 import os
-import shutil
 import sys
 from configparser import ConfigParser
-from inspect import signature
 
 import numpy as np
 import scipy
 import torch
-from torch import nn, package
+from torch import nn
 import h5py
 
 
@@ -127,26 +125,6 @@ class Transform:
         if self.boxcox:
             self.opt_lambda = state_dict['opt_lambda']
             print('Load state dict, optimal lambda value:', self.opt_lambda)
-
-
-def save_model(state, model_dict, model_state_dict, path, is_best):
-    model_dir = os.path.join(path, 'model.pt')
-    package_dict = {}
-    if 'verbose' in list(signature(package.PackageExporter.__init__).parameters.keys()):
-        package_dict['verbose'] = False
-    with package.PackageExporter(model_dir, **package_dict) as exp:
-        exp.intern('deeph.**')
-        exp.extern([
-            'scipy.**', 'numpy.**', 'torch_geometric.**', 'sklearn.**',
-            'torch_scatter.**', 'torch_sparse.**', 'torch_sparse.**', 'torch_cluster.**', 'torch_spline_conv.**',
-            'pyparsing', 'jinja2', 'sys', 'mkl', 'io', 'setuptools.**', 'rdkit.Chem', 'tqdm',
-            '__future__', '_operator', '_ctypes', 'six.moves.urllib', 'ase', 'matplotlib.pyplot', 'sympy', 'networkx',
-        ])
-        exp.save_pickle('checkpoint', 'model.pkl', state | model_dict)
-    torch.save(state | model_state_dict, os.path.join(path, 'state_dict.pkl'))
-    if is_best:
-        shutil.copyfile(os.path.join(path, 'model.pt'), os.path.join(path, 'best_model.pt'))
-        shutil.copyfile(os.path.join(path, 'state_dict.pkl'), os.path.join(path, 'best_state_dict.pkl'))
 
 
 def write_ham_h5(hoppings_dict, path):

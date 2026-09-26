@@ -13,7 +13,6 @@ from configparser import ConfigParser
 
 import torch
 import torch.optim as optim
-from torch import package
 from torch.nn import MSELoss
 from torch.optim.lr_scheduler import MultiStepLR, ReduceLROnPlateau, CyclicLR
 from torch.utils.data import SubsetRandomSampler, DataLoader
@@ -25,7 +24,14 @@ from psutil import cpu_count
 
 from .data import HData
 from .graph import Collater
-from .utils import Logger, save_model, LossRecord, MaskMSELoss, Transform
+from .utils import Logger, LossRecord, MaskMSELoss, Transform
+from .checkpoint import (
+    load_model_checkpoint,
+    load_pretrained_checkpoint,
+    load_training_checkpoint,
+    read_checkpoint_metadata,
+    save_checkpoint,
+)
 
 
 def scatter_add(src, index, dim=0, dim_size=None):
@@ -166,38 +172,25 @@ class DeepHKernel:
         self.early_stopping_loss_epoch = json.loads(self.config.get('train', 'early_stopping_loss_epoch'))
 
     def build_model(self, model_pack_dir: str = None, old_version=None):
+        checkpoint_path = None
         if model_pack_dir is not None:
-            assert old_version is not None
             if old_version is True:
-                print(f'import HGNN from {model_pack_dir}')
-                sys.path.append(model_pack_dir)
-                from src.deeph import HGNN
-            else:
-                imp = package.PackageImporter(os.path.join(model_pack_dir, 'best_model.pt'))
-                checkpoint = imp.load_pickle('checkpoint', 'model.pkl', map_location=self.device)
-                self.model = checkpoint['model']
-                self.model.to(self.device)
-                self.index_to_Z = checkpoint["index_to_Z"]
-                self.Z_to_index = checkpoint["Z_to_index"]
-                self.spinful = checkpoint["spinful"]
-                print("=> load best checkpoint (epoch {})".format(checkpoint['epoch']))
-                print(f"=> Atomic types: {self.index_to_Z.tolist()}, "
-                      f"spinful: {self.spinful}, the number of atomic types: {len(self.index_to_Z)}.")
-                if self.target != 'E_ij':
-                    if self.spinful:
-                        self.out_fea_len = self.num_orbital * 8
-                    else:
-                        self.out_fea_len = self.num_orbital
-                else:
-                    if self.energy_component == 'both':
-                        self.out_fea_len = 2
-                    elif self.energy_component in ['xc', 'delta_ee', 'summation']:
-                        self.out_fea_len = 1
-                    else:
-                        raise ValueError('Unknown energy_component: {}'.format(self.energy_component))
-                return checkpoint
-        else:
-            from .model import HGNN
+                raise RuntimeError(
+                    "Legacy pickle/package model loading is disabled. "
+                    "Convert the trusted model to best_checkpoint.h5 first."
+                )
+            checkpoint_path = os.path.join(model_pack_dir, 'best_checkpoint.h5')
+            if not os.path.isfile(checkpoint_path):
+                raise FileNotFoundError(
+                    f"Missing HDF5 model checkpoint: {checkpoint_path}"
+                )
+            metadata = read_checkpoint_metadata(checkpoint_path)
+            self.index_to_Z = metadata['index_to_Z']
+            self.Z_to_index = metadata['Z_to_index']
+            self.spinful = metadata['spinful']
+            self.num_species = len(self.index_to_Z)
+
+        from .model import HGNN
 
         if self.spinful:
             if self.target == 'phiVdphi':
@@ -251,7 +244,16 @@ class DeepHKernel:
         params = sum([np.prod(p.size()) for p in model_parameters])
         print("The model you built has: %d parameters" % params)
         self.model.to(self.device)
-        self.load_pretrained()
+        if model_pack_dir is None:
+            self.load_pretrained()
+        else:
+            checkpoint = load_model_checkpoint(
+                checkpoint_path, self.model, self.device
+            )
+            print("=> load best checkpoint (epoch {})".format(checkpoint['epoch']))
+            print(f"=> Atomic types: {self.index_to_Z.tolist()}, "
+                  f"spinful: {self.spinful}, the number of atomic types: {len(self.index_to_Z)}.")
+            return checkpoint
 
     def set_train(self):
         self.criterion_name = self.config.get('hyperparameter', 'criterion', fallback='MaskMSELoss')
@@ -312,32 +314,25 @@ class DeepHKernel:
         pretrained = self.config.get('train', 'pretrained')
         if pretrained:
             if os.path.isfile(pretrained):
-                checkpoint = torch.load(pretrained, map_location=self.device)
-                pretrained_dict = checkpoint['state_dict']
-                model_dict = self.model.state_dict()
-
-                transfer_dict = {}
-                for k, v in pretrained_dict.items():
-                    if v.shape == model_dict[k].shape:
-                        transfer_dict[k] = v
-                        print('Use pretrained parameters:', k)
-
-                model_dict.update(transfer_dict)
-                self.model.load_state_dict(model_dict)
+                checkpoint = load_pretrained_checkpoint(
+                    pretrained, self.model, self.device
+                )
                 print(f'=> loaded pretrained model at "{pretrained}" (epoch {checkpoint["epoch"]})')
             else:
                 print(f'=> no checkpoint found at "{pretrained}"')
+
 
     def load_resume(self):
         resume = self.config.get('train', 'resume')
         if resume:
             if os.path.isfile(resume):
-                checkpoint = torch.load(resume, map_location=self.device)
-                self.model.load_state_dict(checkpoint['state_dict'])
-                self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                checkpoint = load_training_checkpoint(
+                    resume, self.model, self.optimizer, self.device
+                )
                 print(f'=> loaded model at "{resume}" (epoch {checkpoint["epoch"]})')
             else:
                 print(f'=> no checkpoint found at "{resume}"')
+
 
     def get_dataset(self, only_get_graph=False):
         dataset = HData(
@@ -580,9 +575,10 @@ class DeepHKernel:
                           f'Val loss: {val_losses.avg:.8f} \t| '
                           f'Best val loss: {self.best_val_loss:.8f}.'
                           )
-                    best_checkpoint = torch.load(os.path.join(self.config.get('basic', 'save_dir'), 'best_state_dict.pkl'))
-                    self.model.load_state_dict(best_checkpoint['state_dict'])
-                    self.optimizer.load_state_dict(best_checkpoint['optimizer_state_dict'])
+                    best_checkpoint = load_training_checkpoint(
+                        os.path.join(self.config.get('basic', 'save_dir'), 'best_checkpoint.h5'),
+                        self.model, self.optimizer, self.device
+                    )
                     if self.config.getboolean('train', 'revert_then_decay'):
                         if lr_step < lr_step_num:
                             for param_group in self.optimizer.param_groups:
@@ -616,15 +612,22 @@ class DeepHKernel:
                 save_complete = False
                 while not save_complete:
                     try:
-                        save_model({
-                            'epoch': epoch + 1,
-                            'optimizer_state_dict': self.optimizer.state_dict(),
-                            'best_val_loss': self.best_val_loss,
-                            'spinful': self.spinful,
-                            'Z_to_index': self.Z_to_index,
-                            'index_to_Z': self.index_to_Z,
-                        }, {'model': self.model}, {'state_dict': self.model.state_dict()},
-                            path=self.config.get('basic', 'save_dir'), is_best=is_best)
+                        checkpoint_dir = self.config.get('basic', 'save_dir')
+                        save_checkpoint(
+                            os.path.join(checkpoint_dir, 'checkpoint.h5'),
+                            self.model,
+                            self.optimizer,
+                            epoch=epoch + 1,
+                            best_val_loss=self.best_val_loss,
+                            spinful=self.spinful,
+                            index_to_Z=self.index_to_Z,
+                            Z_to_index=self.Z_to_index,
+                        )
+                        if is_best:
+                            shutil.copyfile(
+                                os.path.join(checkpoint_dir, 'checkpoint.h5'),
+                                os.path.join(checkpoint_dir, 'best_checkpoint.h5')
+                            )
                         save_complete = True
                     except KeyboardInterrupt:
                         print('\nKeyboardInterrupt while saving model to disk')
@@ -656,8 +659,10 @@ class DeepHKernel:
             print('\nKeyboardInterrupt')
 
         print('---------Evaluate Model on Test Set---------------')
-        best_checkpoint = torch.load(os.path.join(self.config.get('basic', 'save_dir'), 'best_state_dict.pkl'))
-        self.model.load_state_dict(best_checkpoint['state_dict'])
+        best_checkpoint = load_model_checkpoint(
+            os.path.join(self.config.get('basic', 'save_dir'), 'best_checkpoint.h5'),
+            self.model, self.device
+        )
         print("=> load best checkpoint (epoch {})".format(best_checkpoint['epoch']))
         with torch.no_grad():
             test_csv_name = 'test_results.csv'
