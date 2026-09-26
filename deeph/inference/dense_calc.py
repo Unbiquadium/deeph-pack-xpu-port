@@ -103,7 +103,7 @@ with open(os.path.join(parsed_args.input_dir, "orbital_types.dat")) as f:
     for index_site in range(nsites):
         orbital_type = list(map(int, f.readline().split()))
         orbital_types.append(orbital_type)
-        site_norbits[index_site] = np.sum(np.array(orbital_type) * 2 + 1)
+        site_norbits[index_site] = np.sum(np.array(orbital_type) * 2 + 1) * (1 + spinful)
     norbits = np.sum(site_norbits)
     site_norbits_cumsum = np.cumsum(site_norbits)
 
