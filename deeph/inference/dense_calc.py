@@ -225,10 +225,10 @@ if calc_job == "band":
         num_projected_out = 0
         if ill_project:
             egval_S, egvec_S = linalg.eig(S_k)
-            project_index = np.argwhere(abs(egval_S)> ill_threshold)
-            if len(project_index) != norbits:
+            project_index = abs(egval_S) > ill_threshold
+            if np.count_nonzero(project_index) != norbits:
                 egvec_S = np.matrix(egvec_S[:, project_index])
-                num_projected_out = norbits - len(project_index)
+                num_projected_out = norbits - np.count_nonzero(project_index)
                 H_k = egvec_S.H @ H_k @ egvec_S
                 S_k = egvec_S.H @ S_k @ egvec_S
                 egval = linalg.eigvalsh(H_k, S_k, lower=False)
