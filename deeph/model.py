@@ -144,7 +144,7 @@ class CGConv(MessagePassing):
         if isinstance(x, torch.Tensor):
             x: PairTensor = (x, x)
 
-        # propagate_type: (x: PairTensor, edge_attr: OptTensor)
+        # propagate_type: (x: PairTensor, edge_attr: OptTensor, distance: torch.Tensor)
         out = self.propagate(edge_index, x=x, edge_attr=edge_attr, distance=distance, size=size)
         if self.normalization == 'BatchNorm':
             out = self.bn(out)
