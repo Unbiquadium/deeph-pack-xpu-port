@@ -224,7 +224,7 @@ if calc_job == "band":
         S_k = (S_k + S_k.conj().T)/2.
         num_projected_out = 0
         if ill_project:
-            egval_S, egvec_S = linalg.eig(S_k)
+            egval_S, egvec_S = linalg.eigh(S_k)
             project_index = abs(egval_S) > ill_threshold
             if np.count_nonzero(project_index) != norbits:
                 egvec_S = egvec_S[:, project_index]
