@@ -1,11 +1,10 @@
 import os.path
-import codecs
 from setuptools import setup, find_packages
 
 
 def read(rel_path):
     here = os.path.abspath(os.path.dirname(__file__))
-    with codecs.open(os.path.join(here, rel_path), 'r') as fp:
+    with open(os.path.join(here, rel_path), 'r', encoding='utf-8') as fp:
         return fp.read()
 
 
@@ -49,7 +48,7 @@ setup(
         "tqdm",
         "tensorboard",
     ],
-    license="MIT",
-    license_files="LICENSE",
+    license="LGPL-3.0",
+    license_files=["LICENSE"],
     zip_safe=False,
 )
