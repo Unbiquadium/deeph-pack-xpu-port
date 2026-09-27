@@ -151,7 +151,7 @@ def abacus_parse(input_path, output_path, data_name, only_S=False, get_r=False):
         for index_lat in range(3):
             lattice[index_lat, :] = np.array(f.readline().split())
         if coords_type == "cartesian":
-            frac_coords = frac_coords @ np.matrix(lattice).I
+            frac_coords = frac_coords @ np.linalg.inv(lattice)
         lattice = lattice * lattice_constant
         if only_S:
             spinful = False
