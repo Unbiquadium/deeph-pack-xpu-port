@@ -3,6 +3,73 @@
 </p>
 
 --------------------------------------------------------------------------------
+
+## Python 3.14 / PyTorch XPU port
+
+This branch is a modernization and accelerator port of the original
+[DeepH-pack](https://github.com/mzjb/DeepH-pack) implementation.
+
+The scientific method, original authorship, and citations of DeepH remain those
+of the upstream project. The changes in this port focus on modern runtime
+compatibility, accelerator support, serialization, and maintenance.
+
+### Main changes
+
+- Python 3.14 support.
+- PyTorch 2.14 or later.
+- Native Intel XPU execution through `torch.xpu`.
+- Automatic accelerator selection across Intel XPU, CUDA-compatible PyTorch
+  backends, and CPU fallback.
+- Updated PyTorch Geometric and e3nn compatibility.
+- HDF5-based graph caches and model checkpoints instead of unsafe runtime
+  pickle deserialization.
+- Julia 1.13 project environment for the Julia inference utilities.
+- Modernized Python dense eigensolver and preprocessing code.
+- Compatibility with OpenMX 4.0 has been validated for the tested OpenMX
+  workflow.
+
+### Tested platform
+
+The current port has been tested with:
+
+- Python 3.14.4
+- PyTorch 2.14.0+xpu
+- Intel Arc B390 GPU
+- Julia 1.13.0
+- OpenMX 4.0
+
+AMD ROCm hardware has not been validated as part of this port. PyTorch ROCm
+uses the CUDA-compatible PyTorch device API, but ROCm operation should be
+validated independently before being treated as a tested configuration.
+
+A 244-atom spinful bismuthene inference regression using a migrated legacy
+DeepH model reproduced the legacy band energies with a maximum absolute
+difference of approximately 1.27 microelectronvolts.
+
+The Intel XPU training path has also been tested for forward propagation,
+backpropagation, optimizer updates, checkpoint save/resume, and inference.
+
+### External DFT backends
+
+OpenMX is **not included in this repository**. Install OpenMX, ABACUS,
+FHI-aims, SIESTA, or another supported DFT backend separately as required by
+your workflow.
+
+OpenMX 4.0 describes the version used to validate the tested OpenMX workflow
+of this port; it does not imply that OpenMX is distributed as part of
+DeepH-pack.
+
+### Compatibility notes
+
+The original DeepH-pack runtime and this port use substantially different
+Python/PyTorch dependency generations. Legacy model files may therefore
+require migration to the HDF5 checkpoint format used by this port.
+
+The OpenMX workflow has been exercised end-to-end. The recent ABACUS
+preprocessing modernization has been checked for numerical equivalence of its
+Cartesian-to-fractional coordinate conversion, but a complete ABACUS-generated
+end-to-end regression dataset was not available during this port validation.
+
 [![DOI:10.1038/s43588-022-00265-6](https://zenodo.org/badge/DOI/10.1038/s43588-022-00265-6.svg)](https://doi.org/10.1038/s43588-022-00265-6)
 [![Documentation Status](https://readthedocs.org/projects/deeph-pack/badge/)](https://deeph-pack.readthedocs.io/)
 

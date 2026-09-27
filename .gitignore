@@ -9,3 +9,25 @@ smoke_*.py
 
 # Temporary files
 *.tmp
+
+# Local development environments
+.venv/
+venv/
+deeph-xpu/
+
+# Python generated files
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Local DeepH calculation outputs
+work_dir/
+trained_model/
+
+# External DFT software and data
+openmx/
+openmx4.0/
+openmx4.0-clean/
+DFT_DATA*/
